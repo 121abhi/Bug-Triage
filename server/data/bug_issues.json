@@ -1,0 +1,355 @@
+[
+  {
+    "issue_id": "BUG-001",
+    "title": "Typo in the login page button label",
+    "body": "The 'Sigin In' button on the login page has a typo. It should read 'Sign In'. This is a cosmetic issue and does not affect functionality. Noticed on Chrome and Firefox.",
+    "labels": [
+      "ui",
+      "cosmetic"
+    ],
+    "comments": [
+      "Confirmed on mobile too.",
+      "Low priority but looks unprofessional."
+    ],
+    "ground_truth_severity": "low",
+    "ground_truth_team": "frontend",
+    "ground_truth_fix_keywords": [
+      "typo",
+      "button label",
+      "login page"
+    ]
+  },
+  {
+    "issue_id": "BUG-002",
+    "title": "User profile photo upload fails silently",
+    "body": "When a user tries to upload a profile photo larger than 2MB, the upload silently fails with no error message shown. The user is left on the upload screen with no feedback. Affects all browsers. Workaround: resize photo before upload.",
+    "labels": [
+      "bug",
+      "ux"
+    ],
+    "comments": [
+      "Multiple users reported this in support.",
+      "Workaround is to compress the image first."
+    ],
+    "ground_truth_severity": "medium",
+    "ground_truth_team": "frontend",
+    "ground_truth_fix_keywords": [
+      "file size validation",
+      "error message",
+      "upload feedback"
+    ]
+  },
+  {
+    "issue_id": "BUG-003",
+    "title": "Payment gateway returns 500 on checkout",
+    "body": "Users are unable to complete checkout. The payment gateway integration throws a 500 Internal Server Error when the user clicks 'Pay Now'. This affects 100% of transactions. Revenue is completely blocked. Started after yesterday's deployment.",
+    "labels": [
+      "critical",
+      "payments",
+      "regression"
+    ],
+    "comments": [
+      "Confirmed in production. All payments failing.",
+      "Rolled back the deployment but issue persists.",
+      "Engineering lead escalated to P0."
+    ],
+    "ground_truth_severity": "critical",
+    "ground_truth_team": "backend",
+    "ground_truth_fix_keywords": [
+      "500 error",
+      "payment gateway",
+      "rollback",
+      "checkout"
+    ]
+  },
+  {
+    "issue_id": "BUG-004",
+    "title": "Search results pagination breaks after page 3",
+    "body": "When navigating search results, pages 1 and 2 load correctly. However, clicking 'Next' from page 3 onwards returns an empty result set even though more results exist. The URL updates correctly with ?page=4 but no results are shown.",
+    "labels": [
+      "bug",
+      "search"
+    ],
+    "comments": [
+      "Reproducible on staging and production.",
+      "Affects all search queries with more than 30 results."
+    ],
+    "ground_truth_severity": "high",
+    "ground_truth_team": "backend",
+    "ground_truth_fix_keywords": [
+      "pagination",
+      "offset query",
+      "page parameter",
+      "search API"
+    ]
+  },
+  {
+    "issue_id": "BUG-005",
+    "title": "Dark mode toggle resets on page refresh",
+    "body": "The dark mode preference is not persisted across page refreshes. When a user enables dark mode and refreshes the page, the UI reverts to light mode. The preference is not being saved to localStorage or user settings.",
+    "labels": [
+      "bug",
+      "settings",
+      "ui"
+    ],
+    "comments": [
+      "Users have complained about this repeatedly.",
+      "Should be saved in localStorage at minimum."
+    ],
+    "ground_truth_severity": "low",
+    "ground_truth_team": "frontend",
+    "ground_truth_fix_keywords": [
+      "localStorage",
+      "persist preference",
+      "dark mode",
+      "settings"
+    ]
+  },
+  {
+    "issue_id": "BUG-006",
+    "title": "SQL injection possible in user search endpoint",
+    "body": "The /api/users/search endpoint does not sanitize the 'query' parameter. Passing a crafted string like ' OR 1=1 -- allows full database table dump. Tested on staging. No authentication bypass yet but data exposure is confirmed. This needs immediate patching.",
+    "labels": [
+      "security",
+      "vulnerability"
+    ],
+    "comments": [
+      "CVE filing in progress.",
+      "Do not disclose publicly until patched.",
+      "Affects all environments."
+    ],
+    "ground_truth_severity": "critical",
+    "ground_truth_team": "security",
+    "ground_truth_fix_keywords": [
+      "parameterized queries",
+      "input sanitization",
+      "SQL injection",
+      "prepared statements"
+    ]
+  },
+  {
+    "issue_id": "BUG-007",
+    "title": "CI pipeline fails on every merge to main",
+    "body": "Since the Dockerfile base image was updated to python:3.12-slim, the CI pipeline fails at the 'install dependencies' step. The error is: 'No module named pip'. All merges to main are blocked. Feature branches are unaffected.",
+    "labels": [
+      "ci",
+      "blocker",
+      "docker"
+    ],
+    "comments": [
+      "Happens consistently on every PR merge.",
+      "Pinning the base image to 3.11-slim fixes it temporarily.",
+      "Need a permanent fix."
+    ],
+    "ground_truth_severity": "high",
+    "ground_truth_team": "devops",
+    "ground_truth_fix_keywords": [
+      "Dockerfile",
+      "base image",
+      "pip install",
+      "python version",
+      "CI pipeline"
+    ]
+  },
+  {
+    "issue_id": "BUG-008",
+    "title": "JWT tokens not expiring — sessions last forever",
+    "body": "Access tokens issued by the auth service do not expire. The 'exp' field in the JWT payload is set to year 9999. This means a stolen token can be used indefinitely. There is currently no token revocation mechanism.",
+    "labels": [
+      "security",
+      "auth"
+    ],
+    "comments": [
+      "Discovered during internal security audit.",
+      "Tokens should expire in 15 minutes with refresh token rotation.",
+      "No active exploit detected yet."
+    ],
+    "ground_truth_severity": "critical",
+    "ground_truth_team": "security",
+    "ground_truth_fix_keywords": [
+      "JWT expiry",
+      "token expiration",
+      "refresh token",
+      "revocation",
+      "exp claim"
+    ]
+  },
+  {
+    "issue_id": "BUG-009",
+    "title": "Dashboard chart renders blank on Safari 16",
+    "body": "The analytics dashboard chart component does not render on Safari 16. The chart area shows as completely blank. Chrome and Firefox work fine. The console shows: 'ResizeObserver is not defined'. Affects approximately 18% of our user base.",
+    "labels": [
+      "bug",
+      "browser-compat",
+      "safari"
+    ],
+    "comments": [
+      "Reproduced on macOS Ventura + Safari 16.",
+      "Polyfill for ResizeObserver may fix this.",
+      "18% of users is significant."
+    ],
+    "ground_truth_severity": "high",
+    "ground_truth_team": "frontend",
+    "ground_truth_fix_keywords": [
+      "ResizeObserver",
+      "polyfill",
+      "Safari compatibility",
+      "chart library"
+    ]
+  },
+  {
+    "issue_id": "BUG-010",
+    "title": "Memory leak in background job worker causes OOM crashes",
+    "body": "The background job worker process leaks memory over time. After approximately 6 hours of uptime, memory usage reaches 100% and the process is killed by OOM. This causes all queued jobs to fail. Happens in production every night.",
+    "labels": [
+      "bug",
+      "performance",
+      "worker"
+    ],
+    "comments": [
+      "Monitoring shows linear memory growth.",
+      "Temporary fix: restart worker every 4 hours via cron.",
+      "Root cause suspected in the Redis connection pool not releasing."
+    ],
+    "ground_truth_severity": "high",
+    "ground_truth_team": "backend",
+    "ground_truth_fix_keywords": [
+      "memory leak",
+      "connection pool",
+      "Redis",
+      "OOM",
+      "garbage collection"
+    ]
+  },
+  {
+    "issue_id": "BUG-011",
+    "title": "Race condition in order processing causes duplicate charges",
+    "body": "Under high load, the order processing service occasionally charges customers twice for the same order. Root cause appears to be a race condition: two worker threads both read the order status as 'pending' before either writes 'processing', resulting in duplicate payment API calls. Affects roughly 0.3% of orders during peak traffic.",
+    "labels": [
+      "critical",
+      "payments",
+      "concurrency"
+    ],
+    "comments": [
+      "Customers are reporting double charges.",
+      "Finance team has processed 47 manual refunds this week.",
+      "Needs idempotency key on payment API calls.",
+      "Database-level locking or distributed lock needed."
+    ],
+    "ground_truth_severity": "critical",
+    "ground_truth_team": "backend",
+    "ground_truth_fix_keywords": [
+      "idempotency key",
+      "distributed lock",
+      "optimistic locking",
+      "race condition",
+      "atomic update",
+      "database transaction"
+    ]
+  },
+  {
+    "issue_id": "BUG-012",
+    "title": "API keys exposed in frontend JavaScript bundle",
+    "body": "During a routine bundle analysis, a third-party API key for our analytics provider was found hardcoded in the compiled JavaScript bundle served to all users. The key has read/write access to the analytics dashboard. Bundle is publicly accessible at /static/main.js.",
+    "labels": [
+      "security",
+      "critical",
+      "data-exposure"
+    ],
+    "comments": [
+      "Key is currently live and accessible.",
+      "Should be rotated immediately.",
+      "Must be moved to backend env variables.",
+      "Frontend should call our own backend proxy instead."
+    ],
+    "ground_truth_severity": "critical",
+    "ground_truth_team": "security",
+    "ground_truth_fix_keywords": [
+      "rotate API key",
+      "environment variables",
+      "backend proxy",
+      "remove from bundle",
+      "secrets management",
+      ".env"
+    ]
+  },
+  {
+    "issue_id": "BUG-013",
+    "title": "Kubernetes pods crash-looping after config map update",
+    "body": "After updating the application ConfigMap in Kubernetes, all pods entered a crash-loop backoff state. Logs show: 'KeyError: DATABASE_URL not found in environment'. The ConfigMap update accidentally removed the DATABASE_URL key. Production is down. All services dependent on the database are unavailable.",
+    "labels": [
+      "critical",
+      "infra",
+      "kubernetes"
+    ],
+    "comments": [
+      "Production down for 23 minutes.",
+      "Rolling back ConfigMap restored service.",
+      "Need a validation step before ConfigMap updates go live.",
+      "Also need to add DATABASE_URL to the required keys checklist."
+    ],
+    "ground_truth_severity": "critical",
+    "ground_truth_team": "devops",
+    "ground_truth_fix_keywords": [
+      "ConfigMap validation",
+      "rollback",
+      "DATABASE_URL",
+      "Kubernetes admission webhook",
+      "required keys check",
+      "helm lint"
+    ]
+  },
+  {
+    "issue_id": "BUG-014",
+    "title": "XSS vulnerability in user-generated comment fields",
+    "body": "User-submitted comments are rendered as raw HTML in the feed. An attacker can inject a <script> tag that executes arbitrary JavaScript in other users' browsers. Proof of concept: submitting a comment with <script>alert(document.cookie)</script> shows session cookies. Session hijacking is possible.",
+    "labels": [
+      "security",
+      "xss",
+      "critical"
+    ],
+    "comments": [
+      "PoC confirmed on production.",
+      "Session cookies are being exposed.",
+      "Need to sanitize all user input before rendering.",
+      "DOMPurify or similar library recommended."
+    ],
+    "ground_truth_severity": "critical",
+    "ground_truth_team": "security",
+    "ground_truth_fix_keywords": [
+      "DOMPurify",
+      "HTML sanitization",
+      "escape user input",
+      "Content Security Policy",
+      "XSS",
+      "innerText instead of innerHTML"
+    ]
+  },
+  {
+    "issue_id": "BUG-015",
+    "title": "Database connection pool exhausted under moderate load",
+    "body": "Under moderate load (>200 concurrent users), the application starts throwing 'connection pool exhausted' errors. The current pool size is set to 5 connections. Each API request opens a new connection and some are not being released properly — connection leak suspected in the report generation module which runs long queries.",
+    "labels": [
+      "performance",
+      "database",
+      "scalability"
+    ],
+    "comments": [
+      "Pool size of 5 is way too low for production.",
+      "Report generation queries take 30-60 seconds each.",
+      "Need connection timeout and proper release in finally blocks.",
+      "Consider async connection pooling with asyncpg."
+    ],
+    "ground_truth_severity": "high",
+    "ground_truth_team": "backend",
+    "ground_truth_fix_keywords": [
+      "connection pool size",
+      "connection leak",
+      "finally block",
+      "asyncpg",
+      "pool timeout",
+      "context manager",
+      "report query optimization"
+    ]
+  }
+]

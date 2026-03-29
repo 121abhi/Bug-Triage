@@ -1,0 +1,250 @@
+# spec_version: 1
+# name: my_env
+# type: space
+# runtime: fastapi
+# app: server.app:app
+# port: 8000
+
+# openenv.yaml
+# Environment manifest for BugTriageEnv
+# Registered with the OpenEnv ecosystem via this file.
+# Validated by: openenv validate
+# Deployed via: openenv push
+
+# ---------------------------------------------------------------------------
+# Core identity
+# ---------------------------------------------------------------------------
+name: bug-triage-env                    # unique environment name (used in HF repo)
+version: "1.0.0"                        # semver
+description: >
+  BugTriageEnv is a real-world OpenEnv environment where an AI agent
+  acts as a software engineering triage assistant. The agent reads
+  synthetic GitHub-style bug reports and must classify severity,
+  route issues to the correct engineering team, and suggest concrete
+  fixes. Three tasks of increasing difficulty (easy → medium → hard)
+  test different levels of reasoning and domain knowledge.
+
+# ---------------------------------------------------------------------------
+# Author & license
+# ---------------------------------------------------------------------------
+author: AbhiCode       # CHANGE THIS to your HF username
+license: apache-2.0
+tags:
+  - openenv
+  - bug-triage
+  - software-engineering
+  - nlp
+  - reinforcement-learning
+  - real-world
+
+# ---------------------------------------------------------------------------
+# Environment class registration
+# ---------------------------------------------------------------------------
+environment:
+  module: server.my_env_environment     # Python module path
+  class: MyEnvironment                  # Class name inside that module
+
+# ---------------------------------------------------------------------------
+# Action space definition
+# ---------------------------------------------------------------------------
+action_space:
+  type: discrete+text
+  description: >
+    The agent selects one of five action types per step.
+    Depending on the action type, additional typed fields are required.
+  actions:
+    - name: classify
+      description: Assign a severity label to the current issue
+      fields:
+        - name: severity
+          type: enum
+          values: [critical, high, medium, low]
+          required: true
+
+    - name: assign_team
+      description: Route the issue to the correct engineering team
+      fields:
+        - name: team
+          type: enum
+          values: [frontend, backend, security, devops]
+          required: true
+
+    - name: suggest_fix
+      description: Write a free-text fix suggestion for the issue
+      fields:
+        - name: fix_suggestion
+          type: string
+          min_length: 10
+          required: true
+
+    - name: submit
+      description: >
+        Finalize the current issue. Triggers the grader and returns reward.
+        All required actions for the current task must be called before SUBMIT.
+      fields: []
+
+    - name: skip
+      description: Skip the current issue. Incurs a -0.2 reward penalty.
+      fields: []
+
+# ---------------------------------------------------------------------------
+# Observation space definition
+# ---------------------------------------------------------------------------
+observation_space:
+  type: structured
+  description: >
+    The agent receives a structured observation after each reset() or step().
+    Observation contains the current bug issue details, task context,
+    legal actions, and feedback from the last grader call.
+  fields:
+    - name: issue_id
+      type: string
+      description: Unique identifier for the current issue (e.g. BUG-001)
+
+    - name: title
+      type: string
+      description: Short one-line title of the bug
+
+    - name: body
+      type: string
+      description: Full bug description written by the reporter
+
+    - name: labels
+      type: list[string]
+      description: Pre-existing labels on the issue (may be empty)
+
+    - name: comments
+      type: list[string]
+      description: Developer and user comments on the issue (may be empty)
+
+    - name: task_mode
+      type: enum
+      values: [easy, medium, hard]
+      description: Current task difficulty level
+
+    - name: step_count
+      type: integer
+      description: Number of steps taken so far in this episode
+
+    - name: issues_remaining
+      type: integer
+      description: Number of issues left to triage in this episode
+
+    - name: last_reward
+      type: float
+      description: Reward received from the previous action (0.0 on reset)
+
+    - name: feedback
+      type: string
+      description: Human-readable grader feedback on the last action
+
+    - name: legal_actions
+      type: list[string]
+      description: List of valid action types the agent can take right now
+
+# ---------------------------------------------------------------------------
+# Tasks
+# ---------------------------------------------------------------------------
+tasks:
+  - id: task_1_easy
+    name: Severity Classification
+    difficulty: easy
+    description: >
+      Classify the severity of each bug issue as one of:
+      critical / high / medium / low.
+      The agent must call CLASSIFY then SUBMIT for each issue.
+    num_issues_per_episode: 5
+    max_steps: 15
+    reward_range: [-0.2, 1.0]
+    scoring: >
+      Partial credit via severity neighbour map.
+      Exact match = 1.0, one level off = 0.5,
+      two levels off = 0.2, max wrong = 0.0.
+    baseline_score: 0.42   # random agent expected score
+
+  - id: task_2_medium
+    name: Severity + Team Routing
+    difficulty: medium
+    description: >
+      Classify severity AND assign each issue to the correct team:
+      frontend / backend / security / devops.
+      The agent must call CLASSIFY, ASSIGN_TEAM, then SUBMIT.
+    num_issues_per_episode: 5
+    max_steps: 20
+    reward_range: [-0.2, 1.0]
+    scoring: >
+      severity_score × 0.5 + team_score × 0.5.
+      Severity uses partial credit. Team is binary (correct=1.0, wrong=0.0).
+    baseline_score: 0.28   # random agent expected score
+
+  - id: task_3_hard
+    name: Full Triage Workflow
+    difficulty: hard
+    description: >
+      Classify severity, assign team, AND write a concrete fix suggestion
+      that addresses the root cause of the bug.
+      The agent must call CLASSIFY, ASSIGN_TEAM, SUGGEST_FIX, then SUBMIT.
+    num_issues_per_episode: 5
+    max_steps: 30
+    reward_range: [-0.2, 1.0]
+    scoring: >
+      severity_score × 0.3 + team_score × 0.3 + fix_score × 0.4.
+      Fix score = keyword match ratio against ground truth fix keywords
+      (threshold: 40% keyword coverage for full score).
+    baseline_score: 0.18   # random agent expected score
+
+# ---------------------------------------------------------------------------
+# Reward function summary
+# ---------------------------------------------------------------------------
+reward:
+  type: partial_progress
+  description: >
+    Reward is provided after every issue (not just at episode end).
+    This gives the agent dense learning signal throughout the episode.
+  components:
+    - name: severity_score
+      range: [0.0, 1.0]
+      description: Partial credit for severity classification
+
+    - name: team_score
+      range: [0.0, 1.0]
+      description: Binary score for team routing
+
+    - name: fix_score
+      range: [0.0, 1.0]
+      description: Keyword match ratio for fix suggestion quality
+
+  penalties:
+    - name: skip_penalty
+      value: -0.2
+      description: Applied when agent calls SKIP on an issue
+
+    - name: step_penalty
+      value: -0.05
+      per: extra_step
+      description: Applied per step beyond the minimum needed
+
+# ---------------------------------------------------------------------------
+# Docker / deployment
+# ---------------------------------------------------------------------------
+docker:
+  dockerfile: server/Dockerfile
+  port: 8000
+  build_args:
+    BUILD_MODE: standalone
+    ENV_NAME: my
+
+# ---------------------------------------------------------------------------
+# Runtime options
+# ---------------------------------------------------------------------------
+runtime:
+  max_concurrent_envs: 1        # increase for parallel training
+  reset_options:
+    task_mode:
+      type: enum
+      values: [easy, medium, hard]
+      default: easy
+    seed:
+      type: integer
+      required: false
+      description: Random seed for reproducible episode sampling

@@ -1,0 +1,12 @@
+# Never copy local virtual environments into Docker
+.venv
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+*.egg-info
+dist
+build
+.env
+baseline_results.json
