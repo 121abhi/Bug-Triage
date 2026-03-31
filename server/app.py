@@ -6,24 +6,19 @@
 
 """
 FastAPI application for the My Env Environment.
-
 This module creates an HTTP server that exposes the MyEnvironment
 over HTTP and WebSocket endpoints, compatible with EnvClient.
-
 Endpoints:
     - POST /reset: Reset the environment
     - POST /step: Execute an action
     - GET /state: Get current environment state
     - GET /schema: Get action/observation schemas
     - WS /ws: WebSocket endpoint for persistent sessions
-
 Usage:
     # Development (with auto-reload):
     uvicorn server.app:app --reload --host 0.0.0.0 --port 8000
-
     # Production:
     uvicorn server.app:app --host 0.0.0.0 --port 8000 --workers 4
-
     # Or run directly:
     python -m server.app
 """
@@ -47,6 +42,14 @@ except ImportError:
     from my_env.server.my_env_environment import MyEnvironment
 
 
+try: 
+    from fastapi.responses import JSONResponse
+except ImportError:
+    raise ImportError(
+        "fastapi is required for the web interface."
+    )
+
+    
 # Create the app with web interface and README integration
 app = create_app(
     MyEnvironment,
@@ -56,20 +59,54 @@ app = create_app(
     max_concurrent_envs=1,  # increase this number to allow more concurrent WebSocket sessions
 )
 
+# Root route - returns 200 for hugging face space health ping
+
+@app.get("/")
+async def root():
+    """
+    Root health check end point
+    Required for hugging face spaces for automated ping
+    """
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status":"ok",
+            "environment":"bug-triage-env",
+            "version":"1.0",
+            "description":(
+                "BugTriageEnv - AI agent triages software bug reports."
+                "Tasks: severity classification (easy), team routing (medium), fix suggestion (hard)."
+            ),
+            "endpoints":{
+                "reset":"POST /reset",
+                "step":"POST /step",
+                "state":"GET /state",
+                "schema":"GET /schema",
+                "ws":"WS /ws",
+                "health":"GET /"
+            },
+        },
+    )
+
+@app.get("health")
+async def health():
+    """Explicit health check for Docker Healthcheck and monitoring."""
+    return JSONResponse(
+        status_code=200,
+        content={"status":"OK"},
+    )
+
 
 def main(host: str = "0.0.0.0", port: int = 8000):
     """
     Entry point for direct execution via uv run or python -m.
-
     This function enables running the server without Docker:
         uv run --project . server
         uv run --project . server --port 8001
         python -m my_env.server.app
-
     Args:
         host: Host address to bind to (default: "0.0.0.0")
         port: Port number to listen on (default: 8000)
-
     For production deployments, consider using uvicorn directly with
     multiple workers:
         uvicorn my_env.server.app:app --workers 4
