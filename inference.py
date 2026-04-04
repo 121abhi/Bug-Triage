@@ -2,69 +2,61 @@
 Inference Script — BugTriageEnv
 ===================================
 MANDATORY requirements met:
-    - Named inference.py and placed in root directory
-    - Uses API_BASE_URL, MODEL_NAME, HF_TOKEN environment variables
+    - Named inference.py, placed in root directory
+    - Uses API_BASE_URL, MODEL_NAME, HF_TOKEN env vars
     - Uses OpenAI Client for all LLM calls
+    - Emits [START], [STEP], [END] structured stdout logs
     - Must complete in under 20 minutes
     - Runs on vcpu=2, memory=8gb
 
-Environment variables required:
-    API_BASE_URL   The API endpoint for the LLM
-                   e.g. https://router.huggingface.co/v1
-    MODEL_NAME     The model identifier
-                   e.g. Qwen/Qwen2.5-72B-Instruct
-    HF_TOKEN       Your Hugging Face API token
+Environment variables:
+    API_BASE_URL        The API endpoint for the LLM
+    MODEL_NAME          The model identifier
+    HF_TOKEN            Your Hugging Face / API key
+    LOCAL_IMAGE_NAME    Local Docker image name (optional)
 
-Usage:
-    # Set environment variables
-    export API_BASE_URL=https://router.huggingface.co/v1
-    export MODEL_NAME=Qwen/Qwen2.5-72B-Instruct
-    export HF_TOKEN=hf_your_token_here
+STDOUT FORMAT (strictly followed):
+    [START] task=<task_name> env=<benchmark> model=<model_name>
+    [STEP]  step=<n> action=<action_str> reward=<0.00> done=<true|false> error=<msg|null>
+    [END]   success=<true|false> steps=<n> rewards=<r1,r2,...,rn>
 
-    # Run all tasks
-    python inference.py
-
-    # Run specific task
-    python inference.py --task easy
-    python inference.py --task medium
-    python inference.py --task hard
-
-    # Run against HF Space
-    python inference.py --server https://your-username-bug-triage-env.hf.space
+Example:
+    [START] task=easy env=bug-triage-env model=meta-llama/Llama-3.1-8B-Instruct
+    [STEP] step=1 action=classify:critical reward=0.00 done=false error=null
+    [STEP] step=2 action=submit reward=1.00 done=false error=null
+    [END] success=true steps=10 rewards=0.00,1.00,...
 """
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import json
 import os
 import sys
-import time
 import textwrap
-from typing import Any
+import time
+from typing import Any, Optional
 
 from dotenv import load_dotenv
 
-# Load .env file for local development
 load_dotenv()
 
 # ---------------------------------------------------------------------------
-# MANDATORY environment variables (exactly as specified in submission rules)
+# MANDATORY environment variables
 # ---------------------------------------------------------------------------
-API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-MODEL_NAME   = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
-HF_TOKEN     = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+API_BASE_URL     = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+MODEL_NAME       = os.getenv("MODEL_NAME", "meta-llama/Llama-3.1-8B-Instruct")
+HF_TOKEN         = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")  # optional Docker image
 
 # ---------------------------------------------------------------------------
-# Inference configuration
+# Configuration
 # ---------------------------------------------------------------------------
-DEFAULT_SERVER = "http://localhost:8000"
-DEFAULT_SEED   = 42
-MAX_STEPS      = 50
-TEMPERATURE    = 0.1
-MAX_TOKENS     = 512
-DEBUG          = False
+BENCHMARK              = "bug-triage-env"
+MAX_STEPS              = 50
+TEMPERATURE            = 0.1
+MAX_TOKENS             = 512
+SUCCESS_SCORE_THRESHOLD = 0.3   # avg reward >= 0.3 = success
 
 # ---------------------------------------------------------------------------
 # Dependency checks
@@ -72,7 +64,7 @@ DEBUG          = False
 try:
     from openai import OpenAI
 except ImportError:
-    print("❌ openai package required. Run: pip install openai")
+    print("❌ openai required. Run: pip install openai", flush=True)
     sys.exit(1)
 
 try:
@@ -87,24 +79,69 @@ try:
         TeamLabel,
     )
 except ImportError as e:
-    print(f"❌ Failed to import BugTriageEnv modules: {e}")
+    print(f"❌ Import failed: {e}", flush=True)
     sys.exit(1)
 
-# ---------------------------------------------------------------------------
-# Valid label vocabularies
-# ---------------------------------------------------------------------------
 SEVERITY_VALUES = [s.value for s in SeverityLabel]
 TEAM_VALUES     = [t.value for t in TeamLabel]
+
+# ---------------------------------------------------------------------------
+# MANDATORY structured log functions — exact format required by judges
+# ---------------------------------------------------------------------------
+
+def log_start(task: str, env: str, model: str) -> None:
+    """Emit [START] line — exactly one per episode."""
+    print(f"[START] task={task} env={env} model={model}", flush=True)
+
+
+def log_step(
+    step: int,
+    action: str,
+    reward: float,
+    done: bool,
+    error: Optional[str],
+) -> None:
+    """
+    Emit [STEP] line — exactly one per env.step() call.
+    reward: formatted to 2 decimal places
+    done: lowercase boolean string
+    error: raw error string or 'null'
+    """
+    error_val = error if error else "null"
+    done_val  = str(done).lower()
+    print(
+        f"[STEP] step={step} action={action} "
+        f"reward={reward:.2f} done={done_val} error={error_val}",
+        flush=True,
+    )
+
+
+def log_end(
+    success: bool,
+    steps: int,
+    score: float,
+    rewards: list[float],
+) -> None:
+    """
+    Emit [END] line — exactly one per episode, always emitted even on exception.
+    rewards: comma-separated, 2 decimal places each
+    """
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    print(
+        f"[END] success={str(success).lower()} "
+        f"steps={steps} score={score:.3f} rewards={rewards_str}",
+        flush=True,
+    )
+
 
 # ---------------------------------------------------------------------------
 # System prompt
 # ---------------------------------------------------------------------------
 SYSTEM_PROMPT = textwrap.dedent("""
     You are an expert software engineering triage assistant.
-    Your job is to analyze bug reports and provide structured assessments.
+    Analyze bug reports and provide structured assessments.
     Always respond with valid JSON only.
     No markdown code fences. No explanation. Just the JSON object.
-    Never include text before or after the JSON.
 """).strip()
 
 
@@ -117,7 +154,7 @@ def safe_reward(result: Any) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Helper — build triage prompt
+# Helper — build prompt from observation
 # ---------------------------------------------------------------------------
 def build_prompt(obs: BugObservation) -> str:
     comments_text = (
@@ -147,62 +184,44 @@ def build_prompt(obs: BugObservation) -> str:
         prompt += textwrap.dedent(f"""
             Task: SEVERITY CLASSIFICATION
 
-            Classify the severity of this bug.
-            Valid values: {SEVERITY_VALUES}
-
-            Severity definitions:
-              critical -> System down, data loss, security breach, revenue blocked
+            Classify the severity. Valid values: {SEVERITY_VALUES}
+              critical -> System down, data loss, security breach
               high     -> Major feature broken, no workaround
               medium   -> Feature broken but workaround exists
               low      -> Minor / cosmetic issue
 
             Respond with ONLY this JSON:
-            {{
-              "severity": "<one of {SEVERITY_VALUES}>"
-            }}
+            {{ "severity": "<one of {SEVERITY_VALUES}>" }}
         """).strip()
 
     elif obs.task_mode == TaskMode.MEDIUM:
         prompt += textwrap.dedent(f"""
             Task: SEVERITY + TEAM ROUTING
 
-            1. Classify the severity.
-            2. Assign to the correct engineering team.
-
-            Valid severity values: {SEVERITY_VALUES}
-            Valid team values: {TEAM_VALUES}
-              frontend -> UI, CSS, React, browser, JavaScript
-              backend  -> API, database, server-side logic, workers
-              security -> Auth, CVEs, data exposure, injection attacks
-              devops   -> CI/CD, Docker, Kubernetes, infra, pipelines
+            1. Classify severity. Valid: {SEVERITY_VALUES}
+            2. Assign team. Valid: {TEAM_VALUES}
+              frontend -> UI, CSS, React, browser
+              backend  -> API, database, server-side
+              security -> Auth, CVEs, data exposure
+              devops   -> CI/CD, Docker, Kubernetes
 
             Respond with ONLY this JSON:
-            {{
-              "severity": "<one of {SEVERITY_VALUES}>",
-              "team": "<one of {TEAM_VALUES}>"
-            }}
+            {{ "severity": "<value>", "team": "<value>" }}
         """).strip()
 
     else:  # HARD
         prompt += textwrap.dedent(f"""
-            Task: FULL TRIAGE — SEVERITY + TEAM + FIX SUGGESTION
+            Task: FULL TRIAGE — SEVERITY + TEAM + FIX
 
-            1. Classify the severity.
-            2. Assign to the correct engineering team.
-            3. Write a detailed technical fix suggestion (minimum 2 sentences).
-
-            Valid severity values: {SEVERITY_VALUES}
-            Valid team values: {TEAM_VALUES}
-              frontend -> UI, CSS, React, browser, JavaScript
-              backend  -> API, database, server-side logic, workers
-              security -> Auth, CVEs, data exposure, injection attacks
-              devops   -> CI/CD, Docker, Kubernetes, infra, pipelines
+            1. Classify severity. Valid: {SEVERITY_VALUES}
+            2. Assign team. Valid: {TEAM_VALUES}
+            3. Write a detailed technical fix (min 2 sentences).
 
             Respond with ONLY this JSON:
             {{
-              "severity": "<one of {SEVERITY_VALUES}>",
-              "team": "<one of {TEAM_VALUES}>",
-              "fix_suggestion": "<your detailed technical fix>"
+              "severity": "<value>",
+              "team": "<value>",
+              "fix_suggestion": "<detailed fix>"
             }}
         """).strip()
 
@@ -213,10 +232,6 @@ def build_prompt(obs: BugObservation) -> str:
 # Helper — call LLM via OpenAI client
 # ---------------------------------------------------------------------------
 def call_llm(client: OpenAI, prompt: str) -> dict[str, Any]:
-    """
-    Call LLM via OpenAI-compatible API.
-    Uses API_BASE_URL, MODEL_NAME, HF_TOKEN as per submission requirements.
-    """
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME,
@@ -227,12 +242,8 @@ def call_llm(client: OpenAI, prompt: str) -> dict[str, Any]:
             temperature=TEMPERATURE,
             max_tokens=MAX_TOKENS,
         )
-
         content = response.choices[0].message.content or ""
         content = content.strip()
-
-        if DEBUG:
-            print(f"      LLM raw: {content[:120]}")
 
         # Strip markdown fences if model adds them
         if "```" in content:
@@ -248,11 +259,10 @@ def call_llm(client: OpenAI, prompt: str) -> dict[str, Any]:
 
         return json.loads(content)
 
-    except json.JSONDecodeError as e:
-        print(f"      ⚠ LLM returned non-JSON: {e}. Using safe defaults.")
+    except json.JSONDecodeError:
         return {}
     except Exception as e:
-        print(f"      ⚠ LLM call failed: {e}. Using safe defaults.")
+        print(f"[DEBUG] LLM call failed: {e}", flush=True)
         return {}
 
 
@@ -270,7 +280,6 @@ def build_actions(
     try:
         severity = SeverityLabel(severity_str)
     except ValueError:
-        print(f"      ⚠ Invalid severity '{severity_str}', defaulting to 'medium'")
         severity = SeverityLabel.MEDIUM
     actions.append(BugAction(
         action_type=ActionType.CLASSIFY,
@@ -283,7 +292,6 @@ def build_actions(
         try:
             team = TeamLabel(team_str)
         except ValueError:
-            print(f"      ⚠ Invalid team '{team_str}', defaulting to 'backend'")
             team = TeamLabel.BACKEND
         actions.append(BugAction(
             action_type=ActionType.ASSIGN_TEAM,
@@ -305,136 +313,141 @@ def build_actions(
 
     # SUBMIT — always last
     actions.append(BugAction(action_type=ActionType.SUBMIT))
-
     return actions
 
 
 # ---------------------------------------------------------------------------
-# Async episode runner — matches test.py pattern exactly
+# Helper — action to string for [STEP] log
+# ---------------------------------------------------------------------------
+def action_to_str(action: BugAction) -> str:
+    """Convert BugAction to compact string for [STEP] log."""
+    if action.action_type == ActionType.CLASSIFY:
+        return f"classify:{action.severity.value if action.severity else 'none'}"
+    elif action.action_type == ActionType.ASSIGN_TEAM:
+        return f"assign_team:{action.team.value if action.team else 'none'}"
+    elif action.action_type == ActionType.SUGGEST_FIX:
+        # Truncate fix for log readability
+        fix = (action.fix_suggestion or "")[:50].replace(" ", "_")
+        return f"suggest_fix:{fix}"
+    elif action.action_type == ActionType.SUBMIT:
+        return "submit"
+    elif action.action_type == ActionType.SKIP:
+        return "skip"
+    return action.action_type.value
+
+
+# ---------------------------------------------------------------------------
+# Async episode runner — one task
 # ---------------------------------------------------------------------------
 async def run_task(
     client: OpenAI,
     server_url: str,
     task_mode: str,
     seed: int,
-    verbose: bool = True,
 ) -> dict[str, Any]:
     """
-    Run one full episode asynchronously.
-    Uses async with MyEnv and await — same pattern as test.py.
+    Run one full episode for a given task.
+    Emits [START], [STEP]×n, [END] to stdout.
     """
-    print(f"\n{'='*60}")
-    print(f"  TASK: {task_mode.upper()}")
-    print(f"  Model: {MODEL_NAME}")
-    print(f"{'='*60}")
+    rewards: list[float] = []
+    steps_taken = 0
+    success = False
+    score = 0.0
 
-    start_time = time.time()
-    issues_triaged = 0
-    step_count = 0
+    # Log [START]
+    log_start(task=task_mode, env=BENCHMARK, model=MODEL_NAME)
 
-    # ✅ async with + await — same pattern as test.py
-    async with MyEnv(base_url=server_url) as env:
+    try:
+        async with MyEnv(base_url=server_url) as env:
+            result = await env.reset(task_mode=task_mode, seed=seed)
 
-        # Reset episode
-        result = await env.reset(task_mode=task_mode, seed=seed)
-        print(f"  Episode started | First issue: {result.observation.issue_id}")
+            step_counter = 0
 
-        while not result.done and step_count < MAX_STEPS:
-            obs: BugObservation = result.observation
+            while not result.done and step_counter < MAX_STEPS:
+                obs: BugObservation = result.observation
 
-            # Episode complete
-            if obs.issue_id == "DONE":
-                break
-
-            if verbose:
-                print(f"\n  Issue {obs.issue_id}: {obs.title[:55]}...")
-                print(f"  Remaining: {obs.issues_remaining} | Steps: {step_count}")
-
-            # Call LLM to decide actions
-            prompt = build_prompt(obs)
-            llm_response = call_llm(client, prompt)
-
-            if DEBUG:
-                print(f"      LLM parsed: {llm_response}")
-
-            # Build action sequence
-            actions = build_actions(llm_response, obs.task_mode)
-
-            # Execute actions
-            for action in actions:
-                result = await env.step(action)
-                step_count += 1
-
-                if verbose and action.action_type == ActionType.SUBMIT:
-                    reward = safe_reward(result)
-                    print(f"  → Reward: {reward:.3f}")
-                    feedback = result.observation.feedback
-                    if feedback:
-                        print(f"  → {feedback[:80]}...")
-
-                if result.done:
+                if obs.issue_id == "DONE":
                     break
 
-            issues_triaged += 1
+                # Get LLM decision
+                prompt   = build_prompt(obs)
+                llm_resp = call_llm(client, prompt)
+                actions  = build_actions(llm_resp, obs.task_mode)
 
-        # Get final state
-        state = await env.state()
-        elapsed = time.time() - start_time
+                # Execute each action and emit [STEP] for each
+                for action in actions:
+                    result = await env.step(action)
+                    step_counter += 1
 
-        print(f"\n  ✅ Episode complete in {elapsed:.1f}s")
-        print(f"  Total reward : {state.total_reward:.4f}")
-        print(f"  Issues done  : {issues_triaged}/{state.episode_issues}")
-        print(f"  Steps taken  : {step_count}")
+                    reward    = safe_reward(result)
+                    done      = result.done
+                    action_str = action_to_str(action)
 
-        avg_score = round(state.total_reward / max(issues_triaged, 1), 4)
+                    # Get any error from feedback
+                    feedback  = result.observation.feedback or ""
+                    error_str = None
+                    if "Invalid" in feedback or "requires" in feedback.lower():
+                        error_str = feedback[:80].replace(" ", "_")
 
-        return {
-            "task": task_mode,
-            "model": MODEL_NAME,
-            "api_base_url": API_BASE_URL,
-            "total_reward": state.total_reward,
-            "avg_score": avg_score,
-            "issues_triaged": issues_triaged,
-            "episode_issues": state.episode_issues,
-            "steps_taken": step_count,
-            "per_issue_scores": state.scores_per_issue,
-            "elapsed_seconds": round(elapsed, 2),
-        }
+                    # Log [STEP] — one per env.step() call
+                    log_step(
+                        step=step_counter,
+                        action=action_str,
+                        reward=reward,
+                        done=done,
+                        error=error_str,
+                    )
 
+                    rewards.append(reward)
 
-# ---------------------------------------------------------------------------
-# Summary printer
-# ---------------------------------------------------------------------------
-def print_summary(results: list[dict[str, Any]]) -> None:
-    print(f"\n{'='*60}")
-    print("  INFERENCE RESULTS — BugTriageEnv")
-    print(f"  Model    : {MODEL_NAME}")
-    print(f"  API Base : {API_BASE_URL}")
-    print(f"{'='*60}")
-    print(f"  {'Task':<10} {'Avg Score':<12} {'Total':<10} {'Issues':<10} {'Steps'}")
-    print(f"  {'-'*10} {'-'*12} {'-'*10} {'-'*10} {'-'*8}")
-    for r in results:
-        issues = f"{r['issues_triaged']}/{r['episode_issues']}"
-        print(
-            f"  {r['task']:<10} "
-            f"{r['avg_score']:<12.4f} "
-            f"{r['total_reward']:<10.4f} "
-            f"{issues:<10} "
-            f"{r['steps_taken']}"
+                    if done:
+                        break
+
+            steps_taken = step_counter
+
+            # Get final state for score calculation
+            state = await env.state()
+            total_reward = state.total_reward
+            num_issues   = max(state.episode_issues, 1)
+
+            # Normalize score to 0.0–1.0
+            score   = min(max(total_reward / num_issues, 0.0), 1.0)
+            success = score >= SUCCESS_SCORE_THRESHOLD
+
+    except Exception as e:
+        print(f"[DEBUG] Episode error: {e}", flush=True)
+        score   = 0.0
+        success = False
+
+    finally:
+        # Log [END] — always emitted, even on exception
+        log_end(
+            success=success,
+            steps=steps_taken,
+            score=score,
+            rewards=rewards,
         )
-    print(f"{'='*60}")
-    all_valid = all(0.0 <= r["avg_score"] <= 1.0 for r in results)
-    print(f"\n  Scores in valid range (0.0–1.0): {'✅ Yes' if all_valid else '❌ No'}")
-    print()
+
+    return {
+        "task":         task_mode,
+        "model":        MODEL_NAME,
+        "score":        score,
+        "total_reward": sum(rewards),
+        "avg_reward":   round(sum(rewards) / max(len([r for r in rewards if r != 0]), 1), 4),
+        "steps":        steps_taken,
+        "success":      success,
+        "rewards":      rewards,
+    }
 
 
 # ---------------------------------------------------------------------------
 # Async main
 # ---------------------------------------------------------------------------
-async def async_main(args: argparse.Namespace) -> None:
-    global DEBUG
-    DEBUG = args.debug
-
+async def async_main(
+    tasks: list[str],
+    server_url: str,
+    seed: int,
+) -> None:
     # Validate mandatory env vars
     missing = []
     if not API_BASE_URL:
@@ -445,20 +458,8 @@ async def async_main(args: argparse.Namespace) -> None:
         missing.append("HF_TOKEN")
 
     if missing:
-        print(f"\n❌ Missing required environment variables: {missing}")
-        print()
-        print("  Set them before running:")
-        print("  export API_BASE_URL=https://router.huggingface.co/v1")
-        print("  export MODEL_NAME=Qwen/Qwen2.5-72B-Instruct")
-        print("  export HF_TOKEN=hf_your_token_here")
+        print(f"[DEBUG] Missing env vars: {missing}", flush=True)
         sys.exit(1)
-
-    print(f"\n🚀 BugTriageEnv Inference Script")
-    print(f"   API Base URL : {API_BASE_URL}")
-    print(f"   Model        : {MODEL_NAME}")
-    print(f"   Server       : {args.server}")
-    print(f"   Seed         : {args.seed}")
-    print(f"   Task         : {args.task}")
 
     # Initialize OpenAI client with mandatory vars
     client = OpenAI(
@@ -466,49 +467,44 @@ async def async_main(args: argparse.Namespace) -> None:
         api_key=HF_TOKEN,
     )
 
-    tasks = (
-        ["easy", "medium", "hard"]
-        if args.task == "all"
-        else [args.task]
-    )
-
-    results = []
     total_start = time.time()
+    all_results = []
 
     for task in tasks:
         result = await run_task(
             client=client,
-            server_url=args.server,
+            server_url=server_url,
             task_mode=task,
-            seed=args.seed,
-            verbose=not args.quiet,
+            seed=seed,
         )
-        results.append(result)
+        all_results.append(result)
 
-        # Runtime check — must be under 20 minutes
+        # Runtime guard
         elapsed = time.time() - total_start
         if elapsed > 18 * 60:
-            print(f"⚠ Approaching 20-minute limit ({elapsed/60:.1f} min elapsed)")
+            print(
+                f"[DEBUG] Approaching 20-minute limit "
+                f"({elapsed/60:.1f} min)",
+                flush=True,
+            )
 
-    print_summary(results)
-
-    output_path = "inference_results.json"
-    with open(output_path, "w") as f:
-        json.dump(results, f, indent=2)
-    print(f"💾 Results saved → {output_path}")
+    # Save results
+    with open("inference_results.json", "w") as f:
+        json.dump(all_results, f, indent=2)
 
     total_elapsed = time.time() - total_start
-    print(f"⏱  Total runtime: {total_elapsed/60:.1f} minutes")
-    if total_elapsed > 20 * 60:
-        print("❌ WARNING: Exceeded 20-minute runtime limit!")
-    else:
-        print(f"✅ Completed within 20-minute limit")
+    print(
+        f"[DEBUG] Total runtime: {total_elapsed/60:.1f} min",
+        flush=True,
+    )
 
 
 # ---------------------------------------------------------------------------
 # CLI entrypoint
 # ---------------------------------------------------------------------------
 def main() -> None:
+    import argparse
+
     parser = argparse.ArgumentParser(
         description="BugTriageEnv inference script"
     )
@@ -520,29 +516,28 @@ def main() -> None:
     )
     parser.add_argument(
         "--server",
-        default=DEFAULT_SERVER,
-        help=f"Server URL (default: {DEFAULT_SERVER})",
+        default="http://localhost:8000",
+        help="Server URL",
     )
     parser.add_argument(
         "--seed",
         type=int,
-        default=DEFAULT_SEED,
-        help=f"Random seed (default: {DEFAULT_SEED})",
-    )
-    parser.add_argument(
-        "--quiet",
-        action="store_true",
-        help="Suppress per-step output",
-    )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Show LLM raw responses",
+        default=42,
+        help="Random seed (default: 42)",
     )
     args = parser.parse_args()
 
-    # Run async main
-    asyncio.run(async_main(args))
+    tasks = (
+        ["easy", "medium", "hard"]
+        if args.task == "all"
+        else [args.task]
+    )
+
+    asyncio.run(async_main(
+        tasks=tasks,
+        server_url=args.server,
+        seed=args.seed,
+    ))
 
 
 if __name__ == "__main__":
