@@ -516,7 +516,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--server",
-        default="http://localhost:8000",
+        default="http://localhost:7860",
         help="Server URL",
     )
     parser.add_argument(
